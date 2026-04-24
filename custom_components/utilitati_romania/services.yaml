@@ -1,0 +1,13 @@
+reload_all:
+  name: Reîncarcă toate subintegrările
+  description: Reîncarcă toate intrările furnizorilor configurate pentru Utilități România.
+
+open_provider:
+  name: Deschide furnizor
+  description: Deschide aplicația sau portalul furnizorului pe dispozitivul mobil selectat în Administrare integrare.
+  fields:
+    provider:
+      name: Furnizor
+      description: Cheia internă a furnizorului, de exemplu digi, hidroelectrica, eon.
+      required: true
+      example: digi

@@ -1,0 +1,119 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Alege furnizorul și licența",
+        "data": {
+          "furnizor": "Furnizor",
+          "cheie_licenta": "Cheie licență"
+        }
+      },
+      "credentiale_furnizor": {
+        "title": "Conectare {furnizor}",
+        "data": {
+          "utilizator": "Utilizator / email",
+          "parola": "Parolă",
+          "interval_actualizare": "Interval actualizare (ore)",
+          "digi_history_limit": "Număr facturi istorice per adresă"
+        }
+      },
+      "confirmare_reautentificare": {
+        "title": "Reconectare {furnizor}",
+        "data": {
+          "utilizator": "Utilizator / email",
+          "parola": "Parolă"
+        }
+      },
+      "eon_cod_email": {
+        "title": "Cod de verificare E.ON",
+        "description": "Introdu codul primit pe email la {destinatar}.",
+        "data": {
+          "cod_email": "Cod email"
+        }
+      },
+      "digi_metoda_2fa": {
+        "title": "Metodă verificare Digi",
+        "data": {
+          "digi_2fa_method": "Metodă 2FA",
+          "digi_2fa_target": "Număr pentru SMS"
+        }
+      },
+      "digi_cod_2fa": {
+        "title": "Cod verificare Digi",
+        "data": {
+          "cod_2fa": "Cod 2FA"
+        }
+      },
+      "digi_selectare_cont": {
+        "title": "Selectare cont Digi",
+        "data": {
+          "digi_selected_account_id": "Cont"
+        }
+      },
+      "digi_reauth_metoda_2fa": {
+        "title": "Metodă verificare Digi",
+        "data": {
+          "digi_2fa_method": "Metodă 2FA",
+          "digi_2fa_target": "Număr pentru SMS"
+        }
+      },
+      "digi_reauth_cod_2fa": {
+        "title": "Cod verificare Digi",
+        "data": {
+          "cod_2fa": "Cod 2FA"
+        }
+      },
+      "digi_reauth_selectare_cont": {
+        "title": "Selectare cont Digi",
+        "data": {
+          "digi_selected_account_id": "Cont"
+        }
+      },
+      "selectare_contract_apa_canal": {
+        "title": "Selectare contract Apă Canal Sibiu",
+        "description": "Alege locul de consum pe care vrei să îl configurezi.",
+        "data": {
+          "contract_apa_canal": "Contract / adresă"
+        }
+      },
+      "admin_global": {
+        "title": "Administrare integrare",
+        "description": "Configurează licența globală pentru întreaga integrare.",
+        "data": {
+          "utilizator": "Utilizator / email",
+          "cheie_licenta": "Cheie licență"
+        }
+      }
+    },
+    "error": {
+      "autentificare_esuata": "Autentificarea a eșuat.",
+      "nu_se_poate_conecta": "Conectarea nu este disponibilă acum.",
+      "licenta_invalida": "Licența nu este validă pentru această integrare.",
+      "necunoscuta": "Eroare neașteptată.",
+      "cod_invalid": "Cod invalid sau expirat.",
+      "digi_trimitere_cod_esuata": "Codul Digi nu a putut fi trimis.",
+      "digi_pagina_2fa_invalida": "Pagina 2FA Digi nu a putut fi interpretată.",
+      "digi_selectare_cont_invalida": "Contul Digi selectat nu a putut fi confirmat.",
+      "fara_contracte": "Nu am găsit niciun contract disponibil pentru acest cont.",
+      "contract_invalid": "Selecția contractului nu mai este validă. Reîncearcă."
+    },
+    "abort": {
+      "already_configured": "Acest cont este deja configurat.",
+      "reauth_successful": "Reautentificarea a fost finalizată."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni",
+        "data": {
+          "interval_actualizare": "Interval actualizare (ore)",
+          "utilizator": "Utilizator / email",
+          "parola": "Parolă",
+          "cheie_licenta": "Cheie licență",
+          "digi_history_limit": "Număr facturi istorice per adresă"
+        }
+      }
+    }
+  }
+}

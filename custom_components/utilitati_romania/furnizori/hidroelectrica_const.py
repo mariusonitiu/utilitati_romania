@@ -1,0 +1,93 @@
+"""Constante pentru integrarea Hidroelectrica România."""
+
+
+
+
+# ──────────────────────────────────────────────
+# Configurare implicită
+# ──────────────────────────────────────────────
+DEFAULT_UPDATE_INTERVAL = 3600  # Interval de actualizare în secunde (1 oră)
+MIN_UPDATE_INTERVAL = 300       # 5 minute
+MAX_UPDATE_INTERVAL = 86400     # 24 ore
+
+# ──────────────────────────────────────────────
+# Timeout implicit pentru requesturi API (secunde)
+# ──────────────────────────────────────────────
+API_TIMEOUT = 15
+
+# ──────────────────────────────────────────────
+# Limbă implicită
+# ──────────────────────────────────────────────
+DEFAULT_LANGUAGE = "RO"
+
+# ──────────────────────────────────────────────
+# Headere HTTP — Pre-autentificare (SourceType=0)
+# ──────────────────────────────────────────────
+PRE_AUTH_HEADERS = {
+    "SourceType": "0",
+    "Content-Type": "application/json",
+    "Host": "hidroelectrica-svc.smartcmobile.com",
+    "User-Agent": "okhttp/4.9.0",
+}
+
+# ──────────────────────────────────────────────
+# Headere HTTP — Post-autentificare (SourceType=1)
+# ──────────────────────────────────────────────
+POST_AUTH_HEADERS = {
+    "SourceType": "1",
+    "Content-Type": "application/json",
+    "Host": "hidroelectrica-svc.smartcmobile.com",
+    "User-Agent": "okhttp/4.9.0",
+}
+
+# ──────────────────────────────────────────────
+# URL-uri API — Base URL (proxy ihidro.ro)
+# ──────────────────────────────────────────────
+API_BASE = "https://ihidro.ro"
+
+# ──────────────────────────────────────────────
+# URL-uri API — Autentificare
+# ──────────────────────────────────────────────
+ENDPOINT_GET_ID = "/API/UserLogin/GetId"
+ENDPOINT_VALIDATE_LOGIN = "/API/UserLogin/ValidateUserLogin"
+ENDPOINT_GET_USER_SETTING = "/API/UserLogin/GetUserSetting"
+ENDPOINT_GET_MASTER_DATA_STATUS = "/API/UserLogin/GetMasterDataStatus"
+
+# ──────────────────────────────────────────────
+# URL-uri API — Utilizare și consum
+# ──────────────────────────────────────────────
+ENDPOINT_GET_MULTI_METER = "/Service/Usage/GetMultiMeter"
+ENDPOINT_GET_USAGE = "/Service/Usage/GetUsageGeneration"
+
+# ──────────────────────────────────────────────
+# URL-uri API — Autocitire și date contor
+# ──────────────────────────────────────────────
+ENDPOINT_GET_WINDOW_DATES_ENC = "/Service/SelfMeterReading/GetWindowDatesENC"
+ENDPOINT_GET_WINDOW_DATES = "/Service/SelfMeterReading/GetWindowDates"
+ENDPOINT_GET_PODS = "/Service/SelfMeterReading/GetPods"
+ENDPOINT_GET_METER_VALUE = "/Service/SelfMeterReading/GetMeterValue"
+ENDPOINT_GET_PREVIOUS_METER_READ = "/Service/SelfMeterReading/GetPreviousMeterRead"
+ENDPOINT_SUBMIT_SELF_METER_READ = "/Service/SelfMeterReading/SubmitSelfMeterRead"
+
+# ──────────────────────────────────────────────
+# URL-uri API — Facturi și plăți
+# ──────────────────────────────────────────────
+ENDPOINT_GET_BILL = "/Service/Billing/GetBill"
+ENDPOINT_GET_BILLING_HISTORY = "/Service/Billing/GetBillingHistoryList"
+
+# ──────────────────────────────────────────────
+# URL-uri API — Istoric citiri și contoare
+# ──────────────────────────────────────────────
+ENDPOINT_GET_METER_COUNTER_SERIES = "/Service/IndexHistory/GetMeterCounterSeries"
+ENDPOINT_GET_METER_READ_HISTORY = "/Service/IndexHistory/GetMeterReadHistory"
+
+# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+
+# ──────────────────────────────────────────────
+# Atribuție
+# ──────────────────────────────────────────────
+
+# ──────────────────────────────────────────────
+# Chei de configurare (din homeassistant.const)
+# ──────────────────────────────────────────────
