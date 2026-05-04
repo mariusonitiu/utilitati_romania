@@ -35,6 +35,7 @@ from .deer_device import alias_loc_deer, slug_loc_deer
 from .eon_device import alias_loc_eon, slug_loc_eon
 from .hidro_device import alias_loc_consum, slug_loc_consum
 from .myelectrica_device import alias_loc_myelectrica, slug_loc_myelectrica
+from .ebloc_device import alias_loc_ebloc, slug_loc_ebloc
 from .naming import build_provider_slug, extract_street_slug
 
 _LOGGER = logging.getLogger(__name__)
@@ -314,6 +315,13 @@ def _provider_open_target(provider: str | None) -> dict[str, str] | None:
             "fallback": "https://datemasura.distributie-energie.ro/date_ee/do?action=loginForm",
         }
 
+    if key == "ebloc":
+        return {
+            "mode": "launch_app",
+            "package_name": "com.xisoft.ebloc.ro",
+            "fallback": "https://www.e-bloc.ro/",
+        }
+
     return None
 
 
@@ -395,7 +403,7 @@ def _async_ensure_services(hass: HomeAssistant) -> None:
                 _LOGGER.exception("Nu am putut lansa aplicația pentru furnizorul %s", provider)
 
         fallback = target.get("fallback")
-        if fallback and target.get("mode") == "url":
+        if fallback:
             try:
                 await hass.services.async_call(
                     "notify",
@@ -646,6 +654,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _migrare_unique_ids(hass, entry, coordonator)
     hass.data[DOMENIU][entry.entry_id] = coordonator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORME)
+    if entry.data.get(CONF_FURNIZOR) == "ebloc":
+        await _async_force_migrare_entity_ids_ebloc(hass, entry, coordonator)
     await _async_cleanup_admin_registry_links(hass)
     return True
 
@@ -816,6 +826,77 @@ def _migrare_senzori_apa_canal(entry, data) -> dict[str, tuple[str, str]]:
     return mapping
 
 
+
+def _migrare_senzori_ebloc(entry_id: str, data) -> dict[str, tuple[str, str]]:
+    from .sensor import SENZORI_CONT_EBLOC
+
+    mapping: dict[str, tuple[str, str]] = {}
+
+    for cont in data.conturi:
+        alias_nou = alias_loc_ebloc(cont.nume, cont.adresa, cont.id_cont, cont=cont)
+        slug_nou = slug_loc_ebloc(cont.id_cont, alias_nou, cont.adresa, cont=cont)
+
+        old_slugs = {
+            _slug_legacy(getattr(cont, "id_cont", None) or getattr(cont, "nume", None) or getattr(cont, "adresa", None)),
+            build_provider_slug("ebloc", getattr(cont, "adresa", None) or alias_nou, getattr(cont, "id_cont", None)),
+            build_provider_slug("ebloc", getattr(cont, "nume", None) or alias_nou, getattr(cont, "id_cont", None)),
+        }
+
+        for descriere in SENZORI_CONT_EBLOC:
+            new_unique = f"{entry_id}_ebloc_{cont.id_cont}_{descriere.key}"
+            new_object_id = f"{slug_nou}_{descriere.key}"
+            mapping[new_unique] = (new_unique, new_object_id)
+
+            for old_slug in old_slugs:
+                mapping[f"{entry_id}_ebloc_{old_slug}_{descriere.key}"] = (new_unique, new_object_id)
+                mapping[f"{entry_id}_{old_slug}_{descriere.key}"] = (new_unique, new_object_id)
+
+        numar_persoane_setare_unique = f"{entry_id}_ebloc_{cont.id_cont}_numar_persoane_setare"
+        mapping[numar_persoane_setare_unique] = (
+            numar_persoane_setare_unique,
+            f"{slug_nou}_numar_persoane_setare",
+        )
+
+        trimite_numar_persoane_unique = f"{entry_id}_ebloc_{cont.id_cont}_trimite_numar_persoane"
+        mapping[trimite_numar_persoane_unique] = (
+            trimite_numar_persoane_unique,
+            f"{slug_nou}_trimite_numar_persoane",
+        )
+
+    return mapping
+
+
+def _cleanup_entitati_ebloc_scoase(registry, entry: ConfigEntry) -> None:
+    """Șterge entitățile e-bloc scoase din modelul curent.
+
+    Home Assistant păstrează în registry entitățile create anterior, chiar dacă platforma
+    nu le mai creează. Pentru e-bloc, le eliminăm controlat după unique_id, ca să nu
+    rămână senzori indisponibili după curățarea modelului de date.
+    """
+    chei_scoase = {
+        "id_ultima_factura",
+        "numar_facturi",
+        "numar_plati",
+        "valoare_ultima_factura",
+        "sold_curent",
+    }
+
+    for entity_entry in list(er.async_entries_for_config_entry(registry, entry.entry_id)):
+        if entity_entry.platform != DOMENIU or entity_entry.domain != "sensor":
+            continue
+
+        unique_id = str(entity_entry.unique_id or "")
+        if f"{entry.entry_id}_ebloc_" not in unique_id:
+            continue
+
+        if any(unique_id.endswith(f"_{cheie}") for cheie in chei_scoase):
+            try:
+                registry.async_remove(entity_entry.entity_id)
+            except Exception:
+                continue
+
+
+
 def _migrare_senzori_nova(entry_id: str, data) -> dict[str, tuple[str, str]]:
     from .sensor import SENZORI_REZUMAT, SENZORI_REZUMAT_FINANCIAR
 
@@ -832,6 +913,93 @@ def _migrare_senzori_nova(entry_id: str, data) -> dict[str, tuple[str, str]]:
         new_object_id = f"{slug}_{descriere.key}"
         mapping[new_unique] = (new_unique, new_object_id)
     return mapping
+
+
+
+async def _async_force_migrare_entity_ids_ebloc(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordonator: CoordonatorUtilitatiRomania,
+) -> None:
+    """Forțează entity_id-urile e-bloc către naming-ul stabil nou.
+
+    Unique ID-urile au rămas stabile ca să păstrăm istoricul, dar entity_id-urile vechi
+    bazate pe nume/asociație trebuie redenumite automat.
+    """
+    data = coordonator.data
+    if not data:
+        return
+
+    from .sensor import SENZORI_CONT_EBLOC
+
+    registry = er.async_get(hass)
+    entries = list(er.async_entries_for_config_entry(registry, entry.entry_id))
+
+    def _entry_dupa_unique(unique_id: str):
+        for existing in entries:
+            if existing.platform == DOMENIU and existing.unique_id == unique_id:
+                return existing
+        return None
+
+    def _entity_id_existent(entity_id: str):
+        for existing in entries:
+            if existing.entity_id == entity_id:
+                return existing
+        return None
+
+    dorite: list[tuple[str, str, str]] = []
+
+    for cont in data.conturi:
+        alias = alias_loc_ebloc(cont.nume, cont.adresa, cont.id_cont, cont=cont)
+        slug = slug_loc_ebloc(cont.id_cont, alias, cont.adresa, cont=cont)
+
+        for descriere in SENZORI_CONT_EBLOC:
+            dorite.append(
+                (
+                    "sensor",
+                    f"{entry.entry_id}_ebloc_{cont.id_cont}_{descriere.key}",
+                    f"sensor.{slug}_{descriere.key}",
+                )
+            )
+
+        dorite.append(
+            (
+                "number",
+                f"{entry.entry_id}_ebloc_{cont.id_cont}_numar_persoane_setare",
+                f"number.{slug}_numar_persoane_setare",
+            )
+        )
+        dorite.append(
+            (
+                "button",
+                f"{entry.entry_id}_ebloc_{cont.id_cont}_trimite_numar_persoane",
+                f"button.{slug}_trimite_numar_persoane",
+            )
+        )
+
+    for domain, unique_id, entity_id_dorit in dorite:
+        entity_entry = _entry_dupa_unique(unique_id)
+        if entity_entry is None or entity_entry.domain != domain:
+            continue
+
+        if entity_entry.entity_id == entity_id_dorit:
+            continue
+
+        ocupat = _entity_id_existent(entity_id_dorit)
+        if ocupat is not None and ocupat.entity_id != entity_entry.entity_id:
+            # Dacă entitatea nouă există deja pentru alt unique_id, nu riscăm să stricăm registry-ul.
+            continue
+
+        try:
+            registry.async_update_entity(entity_entry.entity_id, new_entity_id=entity_id_dorit)
+        except Exception:
+            _LOGGER.debug(
+                "Nu am putut migra entity_id-ul e-bloc %s către %s",
+                entity_entry.entity_id,
+                entity_id_dorit,
+                exc_info=True,
+            )
+
 
 
 async def _migrare_unique_ids(
@@ -856,10 +1024,15 @@ async def _migrare_unique_ids(
         mapping = _migrare_senzori_apa_canal(entry, data)
     elif furnizor == "nova":
         mapping = _migrare_senzori_nova(entry.entry_id, data)
+    elif furnizor == "ebloc":
+        mapping = _migrare_senzori_ebloc(entry.entry_id, data)
     else:
         return
 
     registry = er.async_get(hass)
+    if furnizor == "ebloc":
+        _cleanup_entitati_ebloc_scoase(registry, entry)
+
     entities = getattr(registry, "entities", {})
     entries = list(entities.values()) if hasattr(entities, "values") else []
 
@@ -904,7 +1077,7 @@ async def _migrare_unique_ids(
             if desired_entity_id != entity_entry.entity_id and not existing_entity_id:
                 kwargs["new_entity_id"] = desired_entity_id
             if kwargs:
-                er.async_update_entity(registry, entity_entry.entity_id, **kwargs)
+                registry.async_update_entity(entity_entry.entity_id, **kwargs)
         except Exception:
             continue
 

@@ -22,6 +22,7 @@ _PROVIDER_LABELS = {
     "deer": "DEER",
     "digi": "Digi",
     "eon": "E.ON",
+    "ebloc": "e-bloc.ro",
     "hidroelectrica": "Hidroelectrica",
     "myelectrica": "myElectrica",
     "nova": "Nova",
@@ -367,7 +368,7 @@ def _build_invoice_item(
         consum_id_text = str(consum_id or "").strip()
         invoice_title = consum_id_text or "Ultima factură"
 
-    return {
+    item = {
         "entry_id": coordonator.intrare.entry_id,
         "entry_title": coordonator.intrare.title,
         "furnizor": instantaneu.furnizor,
@@ -396,6 +397,28 @@ def _build_invoice_item(
         "refresh_button_entity_id": _refresh_button_entity_id(coordonator),
         "can_refresh": _refresh_button_entity_id(coordonator) is not None,
     }
+
+    if instantaneu.furnizor in {"ebloc", "apa_canal"}:
+        id_cont = getattr(cont, "id_cont", None) if cont else getattr(factura, "id_cont", None)
+
+        citire_permisa = _consum_value(instantaneu, "citire_index_permisa", id_cont)
+        perioada_citire = _consum_value(instantaneu, "perioada_citire", id_cont)
+        zile_pana_citire = _consum_value(instantaneu, "zile_pana_citire_index", id_cont)
+
+        if instantaneu.furnizor == "ebloc":
+            item["invoice_title"] = (
+                invoice_title
+                if invoice_title and invoice_title != "Ultima factură"
+                else "Întreținere"
+            )
+            item["tip_serviciu"] = "Întreținere"
+
+        item["reading_available"] = True
+        item["reading_is_open"] = normalize_text(citire_permisa).lower() in {"da", "yes", "true", "1", "on"}
+        item["reading_period"] = perioada_citire
+        item["reading_days_until"] = zile_pana_citire
+
+    return item
 
 
 def _build_eon_fallback_item(

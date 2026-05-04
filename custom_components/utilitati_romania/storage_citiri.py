@@ -38,13 +38,22 @@ async def async_salveaza_citire(
     furnizor: str,
     id_cont: str,
     valoare: float,
+    *,
+    timestamp: str | None = None,
+    sursa: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     cache = _cache_root(hass)
     key = f"{furnizor}_{id_cont}"
-    cache[key] = {
+    item: dict[str, Any] = {
         "valoare": valoare,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timestamp or datetime.now().isoformat(),
     }
+    if sursa:
+        item["sursa"] = sursa
+    if extra:
+        item.update(extra)
+    cache[key] = item
     await async_salveaza_cache_citiri(hass)
 
 

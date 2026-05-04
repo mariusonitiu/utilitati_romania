@@ -17,7 +17,7 @@ def _parseaza_data(text: str | None) -> date | None:
     text = str(text).strip().rstrip('Z')
     if ' ' in text:
         text = text.split(' ')[0]
-    for fmt in ('%d/%m/%Y', '%Y%m%d', '%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M:%S'):
+    for fmt in ('%d/%m/%Y', '%d.%m.%Y', '%d-%m-%Y', '%Y%m%d', '%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M:%S'):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -155,14 +155,54 @@ def _extrage_fereastra(payload: dict[str, Any] | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _citire_permisa(window_data: dict[str, Any], previous_read_payload: dict[str, Any] | None) -> bool:
+def _citire_permisa(window_data: dict[str, Any]) -> bool:
+    """Returnează strict starea reală a ferestrei de autocitire din API.
+
+    Nu folosim existența unei citiri anterioare drept fallback pentru că
+    `previous_meter_read` există și în afara perioadei active și poate produce
+    notificări false.
+    """
     flag = window_data.get('Is_Window_Open')
     if isinstance(flag, bool):
         return flag
+    if isinstance(flag, (int, float)):
+        return int(flag) == 1
     if isinstance(flag, str):
         return flag.strip().lower() in {'true', '1', 'yes', 'da'}
-    prev_data = safe_get(previous_read_payload or {}, 'result', 'Data', default=[])
-    return bool(prev_data)
+    return False
+
+
+def _normalizare_registru(valoare: Any) -> str:
+    return str(valoare or '').strip().upper()
+
+
+def _registru_rand(row: dict[str, Any]) -> str:
+    for key in ('Registers', 'registers', 'Register', 'register', 'registerCode', 'RegisterCode'):
+        registru = _normalizare_registru(row.get(key))
+        if registru:
+            return registru
+    return ''
+
+
+def _este_registru_productie(registru: str) -> bool:
+    return _normalizare_registru(registru) == '1.8.0_P'
+
+
+def _este_registru_consum(registru: str) -> bool:
+    return _normalizare_registru(registru) == '1.8.0'
+
+
+def _istoric_are_registru_productie(history_payload: dict[str, Any] | None) -> bool:
+    def _walk(node: Any) -> bool:
+        if isinstance(node, dict):
+            if _este_registru_productie(_registru_rand(node)):
+                return True
+            return any(_walk(value) for value in node.values())
+        if isinstance(node, list):
+            return any(_walk(item) for item in node)
+        return False
+
+    return _walk(history_payload or {})
 
 
 def _index_din_previous(previous_payload: dict[str, Any] | None) -> float | None:
@@ -229,9 +269,12 @@ def _extract_history_rows(payload: dict[str, Any] | None) -> list[dict[str, Any]
     return randuri
 
 
-def _index_din_istoric(history_payload: dict[str, Any] | None) -> float | None:
+def _index_din_istoric(history_payload: dict[str, Any] | None, register_filter: str | None = None) -> float | None:
     candidati: list[tuple[date, float]] = []
+    filtru = _normalizare_registru(register_filter) if register_filter else None
     for row in _extract_history_rows(history_payload):
+        if filtru and _registru_rand(row) != filtru:
+            continue
         data_citire = None
         for key in ('MRDate', 'mrDate', 'Date', 'date', 'readDate', 'ReadDate', 'meterReadDate', 'MeterReadDate', 'prevMRDate', 'createdOn', 'CreatedOn'):
             data_citire = _parseaza_data(row.get(key))
@@ -407,6 +450,8 @@ class ClientFurnizorHidroelectrica(ClientFurnizor):
                     history_payload = None
 
             id_cont_unic = account_number or uan
+            este_prosumator_din_istoric = _istoric_are_registru_productie(history_payload)
+            exista_prosumator = exista_prosumator or este_prosumator_din_istoric
 
             conturi.append(ContUtilitate(
                 id_cont=id_cont_unic,
@@ -417,8 +462,8 @@ class ClientFurnizorHidroelectrica(ClientFurnizor):
                 stare='activ',
                 tip_utilitate='curent',
                 tip_serviciu='curent',
-                este_prosumator=False,
-                date_brute={**cont, 'account_number': account_number, 'contract_account_id': uan, 'pod': pod, 'instalare': instalare, 'window_data': window_data, 'previous_meter_read': previous_payload, 'meter_read_history': history_payload, 'meter_serial_numbers': serial_numbers},
+                este_prosumator=este_prosumator_din_istoric,
+                date_brute={**cont, 'account_number': account_number, 'contract_account_id': uan, 'pod': pod, 'instalare': instalare, 'window_data': window_data, 'previous_meter_read': previous_payload, 'meter_read_history': history_payload, 'meter_serial_numbers': serial_numbers, 'este_prosumator': este_prosumator_din_istoric},
             ))
 
             facturi_cont: list[FacturaUtilitate] = []
@@ -466,13 +511,13 @@ class ClientFurnizorHidroelectrica(ClientFurnizor):
             billamount = _float_ro(bill.get('billamount'))
             duedate = _parseaza_data(str(bill.get('duedate') or ''))
             numar_factura = _extrage_numar_factura_lizibil(bill)
-            este_prosumator_cont = rembalance is not None and rembalance < 0
+            este_prosumator_cont = este_prosumator_din_istoric
             consumuri.append(ConsumUtilitate(cheie='este_prosumator', valoare='da' if este_prosumator_cont else 'nu', unitate=None, id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
             exista_prosumator = exista_prosumator or este_prosumator_cont
 
             if rembalance is not None:
                 consumuri.append(ConsumUtilitate(cheie='sold_curent', valoare=round(rembalance, 2), unitate='RON', id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent', date_brute=bill))
-                if este_prosumator_cont:
+                if este_prosumator_cont and rembalance < 0:
                     consumuri.append(ConsumUtilitate(cheie='sold_prosumator', valoare=round(rembalance, 2), unitate='RON', id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent', date_brute=bill))
             if duedate is not None:
                 consumuri.append(ConsumUtilitate(cheie='urmatoarea_scadenta', valoare=duedate.isoformat(), unitate=None, id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
@@ -502,12 +547,19 @@ class ClientFurnizorHidroelectrica(ClientFurnizor):
                     else:
                         continue
                     break
-            index_curent = _index_din_istoric(history_payload)
-            if index_curent is None:
+            index_curent = _index_din_istoric(history_payload, '1.8.0')
+            if index_curent is None and not este_prosumator_cont:
+                index_curent = _index_din_istoric(history_payload)
+            if index_curent is None and not este_prosumator_cont:
                 index_curent = _index_din_previous(previous_payload)
             if index_curent is not None:
                 consumuri.append(ConsumUtilitate(cheie='index_energie_electrica', valoare=round(index_curent, 3), unitate='kWh', id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
-            consumuri.append(ConsumUtilitate(cheie='citire_permisa', valoare='Da' if _citire_permisa(window_data, previous_payload) else 'Nu', unitate=None, id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
+
+            index_productie = _index_din_istoric(history_payload, '1.8.0_P')
+            if index_productie is not None:
+                consumuri.append(ConsumUtilitate(cheie='index_energie_produsa', valoare=round(index_productie, 3), unitate='kWh', id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
+
+            consumuri.append(ConsumUtilitate(cheie='citire_permisa', valoare='Da' if _citire_permisa(window_data) else 'Nu', unitate=None, id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
             are_restanta = (rembalance or 0) > 0
             consumuri.append(ConsumUtilitate(cheie='factura_restanta', valoare='Da' if are_restanta else 'Nu', unitate=None, id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))
             consumuri.append(ConsumUtilitate(cheie='sold_factura', valoare=round(rembalance,2) if rembalance is not None else None, unitate='RON', id_cont=id_cont_unic, tip_utilitate='curent', tip_serviciu='curent'))

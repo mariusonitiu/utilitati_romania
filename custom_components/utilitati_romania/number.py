@@ -11,6 +11,7 @@ from .entitate import EntitateUtilitatiRomania
 from .hidro_device import alias_loc_consum, info_device_hidro, slug_loc_consum
 from .eon_device import alias_loc_eon, info_device_eon, slug_loc_eon
 from .myelectrica_device import alias_loc_myelectrica, info_device_myelectrica, slug_loc_myelectrica
+from .ebloc_device import alias_loc_ebloc, info_device_ebloc, slug_loc_ebloc
 
 
 def _valoare_consum_curent(coordonator: CoordonatorUtilitatiRomania, id_cont: str, cheie: str) -> float | None:
@@ -27,6 +28,21 @@ def _valoare_consum_curent(coordonator: CoordonatorUtilitatiRomania, id_cont: st
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _citire_permisa_curenta(coordonator: CoordonatorUtilitatiRomania, id_cont: str) -> bool:
+    data = getattr(coordonator, 'data', None)
+    consumuri = getattr(data, 'consumuri', None) or []
+    for consum in consumuri:
+        if getattr(consum, 'id_cont', None) != id_cont:
+            continue
+        if getattr(consum, 'cheie', None) != 'citire_permisa':
+            continue
+        valoare = getattr(consum, 'valoare', None)
+        if isinstance(valoare, str):
+            return valoare.strip().lower() in {'da', 'true', '1', 'yes', 'on'}
+        return bool(valoare)
+    return False
 
 
 async def async_setup_entry(
@@ -61,6 +77,10 @@ async def async_setup_entry(
                 if are_contor:
                     entitati.append(NumarIndexMyElectrica(coordonator, cont))
 
+        elif coordonator.data.furnizor == "ebloc":
+            for cont in coordonator.data.conturi:
+                entitati.append(NumarPersoaneEbloc(coordonator, cont))
+
     async_add_entities(entitati)
 
 
@@ -94,14 +114,18 @@ class NumarIndexHidro(EntitateUtilitatiRomania, RestoreNumber):
         await super().async_added_to_hass()
         ultima_stare = await self.async_get_last_number_data()
         if ultima_stare and ultima_stare.native_value is not None:
-            self._attr_native_value = ultima_stare.native_value
+            self._attr_native_value = int(float(ultima_stare.native_value))
         else:
             valoare_curenta = _valoare_consum_curent(self.coordinator, self.cont.id_cont, 'index_energie_electrica')
             if valoare_curenta is not None:
                 self._attr_native_value = valoare_curenta
 
+    @property
+    def available(self) -> bool:
+        return _citire_permisa_curenta(self.coordinator, self.cont.id_cont)
+
     async def async_set_native_value(self, value: float) -> None:
-        self._attr_native_value = value
+        self._attr_native_value = int(float(value))
         self.async_write_ha_state()
 
 
@@ -134,10 +158,10 @@ class NumarIndexEon(EntitateUtilitatiRomania, RestoreNumber):
         await super().async_added_to_hass()
         ultima_stare = await self.async_get_last_number_data()
         if ultima_stare and ultima_stare.native_value is not None:
-            self._attr_native_value = ultima_stare.native_value
+            self._attr_native_value = int(float(ultima_stare.native_value))
 
     async def async_set_native_value(self, value: float) -> None:
-        self._attr_native_value = value
+        self._attr_native_value = int(float(value))
         self.async_write_ha_state()
 
 
@@ -170,8 +194,67 @@ class NumarIndexMyElectrica(EntitateUtilitatiRomania, RestoreNumber):
         await super().async_added_to_hass()
         ultima_stare = await self.async_get_last_number_data()
         if ultima_stare and ultima_stare.native_value is not None:
-            self._attr_native_value = ultima_stare.native_value
+            self._attr_native_value = int(float(ultima_stare.native_value))
 
     async def async_set_native_value(self, value: float) -> None:
-        self._attr_native_value = value
+        self._attr_native_value = int(float(value))
         self.async_write_ha_state()
+
+
+class NumarPersoaneEbloc(EntitateUtilitatiRomania, RestoreNumber):
+    _attr_native_min_value = 0
+    _attr_native_max_value = 50
+    _attr_native_step = 1
+    _attr_icon = "mdi:account-group"
+    _attr_mode = "box"
+    _attr_native_unit_of_measurement = "pers."
+
+    def __init__(self, coordonator: CoordonatorUtilitatiRomania, cont) -> None:
+        super().__init__(coordonator)
+        self.cont = cont
+        alias = alias_loc_ebloc(cont.nume, cont.adresa, cont.id_cont, cont=cont)
+        slug = slug_loc_ebloc(cont.id_cont, alias, cont.adresa, cont=cont)
+        self._attr_unique_id = f"{coordonator.intrare.entry_id}_ebloc_{cont.id_cont}_numar_persoane_setare"
+        self._attr_name = f"Număr persoane - {alias}"
+        self._attr_device_info = info_device_ebloc(coordonator.intrare.entry_id, cont)
+        self._attr_suggested_object_id = f"{slug}_numar_persoane_setare"
+        self.entity_id = f"number.{slug}_numar_persoane_setare"
+        self._attr_native_value = 0
+
+    @property
+    def native_value(self):
+        if self._attr_native_value is None:
+            return None
+        return int(float(self._attr_native_value))
+
+    @property
+    def available(self) -> bool:
+        permis = _valoare_consum_curent_text(self.coordinator, self.cont.id_cont, "editare_persoane_permisa")
+        return permis == "da"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        valoare_curenta = _valoare_consum_curent(self.coordinator, self.cont.id_cont, "numar_persoane")
+        if valoare_curenta is not None:
+            self._attr_native_value = valoare_curenta
+            return
+        ultima_stare = await self.async_get_last_number_data()
+        if ultima_stare and ultima_stare.native_value is not None:
+            self._attr_native_value = int(float(ultima_stare.native_value))
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = int(value)
+        self.async_write_ha_state()
+
+
+def _valoare_consum_curent_text(coordonator: CoordonatorUtilitatiRomania, id_cont: str, cheie: str) -> str | None:
+    data = getattr(coordonator, "data", None)
+    consumuri = getattr(data, "consumuri", None) or []
+    for consum in consumuri:
+        if getattr(consum, "id_cont", None) != id_cont:
+            continue
+        if getattr(consum, "cheie", None) != cheie:
+            continue
+        valoare = getattr(consum, "valoare", None)
+        return str(valoare) if valoare is not None else None
+    return None

@@ -4,6 +4,7 @@ from .apa_canal import ClientFurnizorApaCanal
 from .baza import ClientFurnizor
 from .digi import ClientFurnizorDigi
 from .eon import ClientFurnizorEon
+from .ebloc import ClientFurnizorEbloc
 from .hidroelectrica import ClientFurnizorHidroelectrica
 from .myelectrica import ClientFurnizorMyElectrica
 from .deer import ClientFurnizorDeer
@@ -17,6 +18,7 @@ FURNIZORI: dict[str, type[ClientFurnizor]] = {
     ClientFurnizorHidroelectrica.cheie_furnizor: ClientFurnizorHidroelectrica,
     ClientFurnizorMyElectrica.cheie_furnizor: ClientFurnizorMyElectrica,
     ClientFurnizorDeer.cheie_furnizor: ClientFurnizorDeer,
+    ClientFurnizorEbloc.cheie_furnizor: ClientFurnizorEbloc,
 }
 
 

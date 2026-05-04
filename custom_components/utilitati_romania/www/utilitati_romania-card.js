@@ -289,7 +289,7 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
     const terms = this._readingTerms(location, provider);
     const normalizedProvider = providerKey.replace(/_/g, " ");
 
-    if (!providerKey || !["hidroelectrica", "eon", "myelectrica"].includes(providerKey)) {
+    if (!providerKey || !["hidroelectrica", "eon", "myelectrica", "apa_canal"].includes(providerKey)) {
       return null;
     }
 
@@ -301,7 +301,9 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
 
       const looksLikeReadingSensor = !!(
         entityId.includes("citire_permisa") ||
+        entityId.includes("citire_index_permisa") ||
         text.includes("citire permisa") ||
+        text.includes("citire index permisa") ||
         attrs.inceput_perioada || attrs.sfarsit_perioada || attrs["Perioadă start"] || attrs["Perioadă sfârșit"]
       );
 
@@ -454,6 +456,44 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
       return controls;
     }
 
+
+
+    if (providerKey === "apa_canal") {
+      const base = sensorObject.replace(/_citire_index_permisa$/, "").replace(/_citire_permisa$/, "");
+      let numberEntity = states[`number.${base}_index_de_transmis`] || null;
+      if (!numberEntity) {
+        numberEntity = Object.values(states).find((stateObj) => {
+          if (!stateObj.entity_id.startsWith("number.")) return false;
+          const attrs = stateObj.attributes || {};
+          const text = this._entityFriendlyText(stateObj);
+          return (
+            String(attrs.id_cont ?? "") === String(provider.id_cont ?? "") ||
+            (this._textMatchesAny(text, terms) && text.includes("index"))
+          );
+        });
+      }
+
+      const buttonEntity = states[`button.${base}_trimite_index`] || Object.values(states).find((stateObj) => {
+        if (!stateObj.entity_id.startsWith("button.")) return false;
+        const text = this._entityFriendlyText(stateObj);
+        return text.includes("trimite index") && this._textMatchesAny(text, terms);
+      });
+
+      const currentEntity = states[`sensor.${base}_ultimul_index`] || null;
+
+      if (numberEntity && buttonEntity) {
+        controls.push({
+          key: `${providerKey}_${provider.id_cont || base}`,
+          providerKey,
+          label: "Index apă de transmis",
+          numberEntityId: numberEntity.entity_id,
+          buttonEntityId: buttonEntity.entity_id,
+          currentEntityId: currentEntity?.entity_id || null,
+        });
+      }
+      return controls;
+    }
+
     if (providerKey === "myelectrica") {
       const parts = sensorObject.split("_");
       const slug = parts.slice(3, -1).join("_");
@@ -495,6 +535,35 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
     const cacheKey = this._makeKey(location.locatie_cheie, provider.furnizor, provider.id_cont, provider.id_contract);
     if (this._readingCache.has(cacheKey)) return this._readingCache.get(cacheKey);
 
+    const providerKey = String(provider?.furnizor || "").trim().toLowerCase();
+    if (providerKey === "ebloc" && provider?.reading_available) {
+      const isOpen = provider.reading_is_open === true || this._normalizeText(provider.reading_is_open) === "da";
+      const days = Number(provider.reading_days_until);
+      let badge = null;
+
+      if (isOpen) {
+        badge = "Citire deschisă";
+      } else if (Number.isFinite(days)) {
+        if (days === 0) badge = "Citire deschisă";
+        else if (days === 1) badge = "Citire mâine";
+        else if (days > 1) badge = `Citire în ${days} zile`;
+      }
+
+      const result = {
+        available: true,
+        isOpen,
+        controls: [],
+        start: null,
+        end: null,
+        period: provider.reading_period || null,
+        daysUntil: Number.isFinite(days) ? days : null,
+        badge,
+      };
+
+      this._readingCache.set(cacheKey, result);
+      return result;
+    }
+
     const readingSensor = this._findReadingSensor(location, provider);
     if (!readingSensor) {
       const empty = { available: false, isOpen: false, controls: [], start: null, end: null, badge: null };
@@ -510,7 +579,8 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
         ...control,
         numberState,
         currentState,
-        unit: numberState?.attributes?.unit_of_measurement || currentState?.attributes?.unit_of_measurement || "",
+        readingSensorState: readingSensor,
+        unit: numberState?.attributes?.unit_of_measurement || currentState?.attributes?.unit_of_measurement || readingSensor?.attributes?.unit_of_measurement || "",
         currentValue: currentState ? currentState.state : null,
       };
     });
@@ -563,20 +633,120 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
     });
   }
 
-  _getBackendReadingHistoryEntry(control) {
-    const attrs = control?.currentState?.attributes || {};
-    const value = attrs.ultima_citire_transmisa;
-    const timestamp = attrs.ultima_citire_transmisa_la;
-    if (value === undefined || value === null || value === "" || !timestamp) {
-      return null;
+  _firstDefined(...values) {
+    for (const value of values) {
+      if (value !== undefined && value !== null && value !== "") {
+        return value;
+      }
     }
-    return {
-      value,
-      unit: control?.unit || control?.currentState?.attributes?.unit_of_measurement || "",
-      timestamp,
-    };
+    return null;
   }
 
+  _normalizeReadingUnit(unit) {
+    const text = String(unit || "").trim();
+    if (!text) return "";
+    if (["m3", "M3", "mc", "MC"].includes(text)) return "m³";
+    return text;
+  }
+
+  _getBackendReadingHistoryEntry(control) {
+    const currentAttrs = control?.currentState?.attributes || {};
+    const numberAttrs = control?.numberState?.attributes || {};
+    const readingAttrs = control?.readingSensorState?.attributes || {};
+    const providerKey = String(control?.providerKey || "").trim().toLowerCase();
+
+    const value = this._firstDefined(
+      currentAttrs.ultima_citire_transmisa,
+      currentAttrs.ultima_citire_transmisa_valoare,
+      currentAttrs.ultima_citire_client,
+      currentAttrs.ultima_citire,
+      currentAttrs.ultimul_index_transmis,
+      currentAttrs.index_transmis,
+      currentAttrs.valoare,
+      currentAttrs.value,
+      currentAttrs.index,
+      readingAttrs.ultima_citire_transmisa,
+      readingAttrs.ultima_citire_transmisa_valoare,
+      readingAttrs.ultima_citire_client,
+      readingAttrs.ultima_citire,
+      readingAttrs.ultimul_index_transmis,
+      readingAttrs.index_transmis,
+      readingAttrs.valoare,
+      readingAttrs.value,
+      readingAttrs.index,
+      numberAttrs.ultima_citire_transmisa,
+      numberAttrs.ultima_citire_transmisa_valoare,
+      numberAttrs.ultima_citire_client,
+      numberAttrs.ultima_citire,
+      numberAttrs.ultimul_index_transmis,
+      numberAttrs.index_transmis,
+      numberAttrs.valoare,
+      numberAttrs.value,
+      numberAttrs.index
+    );
+
+    const timestamp = this._firstDefined(
+      currentAttrs.ultima_citire_transmisa_la,
+      currentAttrs.ultima_citire_transmisa_data,
+      currentAttrs.data_ultima_citire,
+      currentAttrs.ultima_citire_data,
+      currentAttrs.data_citire,
+      currentAttrs.timestamp,
+      currentAttrs.date,
+      currentAttrs.data,
+      readingAttrs.ultima_citire_transmisa_la,
+      readingAttrs.ultima_citire_transmisa_data,
+      readingAttrs.data_ultima_citire,
+      readingAttrs.ultima_citire_data,
+      readingAttrs.data_citire,
+      readingAttrs.timestamp,
+      readingAttrs.date,
+      readingAttrs.data,
+      numberAttrs.ultima_citire_transmisa_la,
+      numberAttrs.ultima_citire_transmisa_data,
+      numberAttrs.data_ultima_citire,
+      numberAttrs.ultima_citire_data,
+      numberAttrs.data_citire,
+      numberAttrs.timestamp,
+      numberAttrs.date,
+      numberAttrs.data
+    );
+
+    let finalValue = value;
+    const finalTimestamp = timestamp;
+
+    if ((finalValue === undefined || finalValue === null || finalValue === "") && providerKey === "apa_canal") {
+      const currentStateValue = control?.currentState?.state;
+      if (currentStateValue && !["unknown", "unavailable"].includes(String(currentStateValue))) {
+        finalValue = currentStateValue;
+      }
+    }
+
+    if (finalValue === undefined || finalValue === null || finalValue === "" || !finalTimestamp) {
+      return null;
+    }
+
+    const unit = this._normalizeReadingUnit(
+      this._firstDefined(
+        currentAttrs.unitate,
+        currentAttrs.unit,
+        currentAttrs.unit_of_measurement,
+        readingAttrs.unitate,
+        readingAttrs.unit,
+        readingAttrs.unit_of_measurement,
+        numberAttrs.unitate,
+        numberAttrs.unit,
+        numberAttrs.unit_of_measurement,
+        control?.unit
+      )
+    );
+
+    return {
+      value: finalValue,
+      unit,
+      timestamp: finalTimestamp,
+    };
+  }
   _getActionState(type, entityId) {
     return this._actionState[this._actionStateKey(type, entityId)] || { status: "idle", message: "" };
   }
@@ -636,6 +806,7 @@ class UtilitatiRomaniaFacturiCard extends HTMLElement {
             data-id-contract="${this._escapeAttr(String(provider?.id_contract || ""))}"
             data-control-label="${this._escapeAttr(String(control.label || ""))}"
             data-current-value="${this._escapeAttr(String(control.currentValue ?? ""))}"
+            data-current-entity="${this._escapeAttr(control.currentEntityId || "")}"
             data-unit="${this._escapeAttr(String(control.unit || ""))}"
           >
             <div class="reading-control-header">
@@ -765,6 +936,31 @@ _buildProviderRefreshButton(provider) {
     return "";
   }
 
+  _buildProviderReadingDetails(readingData) {
+    if (!readingData || !readingData.available) return "";
+
+    const rows = [];
+
+    if (readingData.period) {
+      rows.push(`<div><span class="detail-label">Perioadă citire:</span> <span class="detail-value">${this._escapeHtml(readingData.period)}</span></div>`);
+    }
+
+    if (readingData.daysUntil !== null && readingData.daysUntil !== undefined) {
+      const value = Number(readingData.daysUntil);
+      let text = "—";
+
+      if (Number.isFinite(value)) {
+        if (value === 0) text = "deschisă acum";
+        else if (value === 1) text = "mâine";
+        else text = `${value} zile`;
+      }
+
+      rows.push(`<div><span class="detail-label">Citire index:</span> <span class="detail-value">${this._escapeHtml(text)}</span></div>`);
+    }
+
+    return rows.join("");
+  }
+
   _buildProviderRow(location, provider, index) {
     const supplier = provider.furnizor_label || provider.furnizor || "Furnizor";
     const title = this._providerCompactTitle(provider);
@@ -818,6 +1014,7 @@ _buildProviderRefreshButton(provider) {
                 <div><span class="detail-label">Data scadenței:</span> <span class="detail-value">${this._escapeHtml(dueDate)}</span></div>
                 <div><span class="detail-label">Serviciu:</span> <span class="detail-value">${this._escapeHtml(tipServiciu)}</span></div>
                 <div><span class="detail-label">Cont:</span> <span class="detail-value">${this._escapeHtml(numeCont)}</span></div>
+                ${this._buildProviderReadingDetails(readingData)}
                 <div class="detail-actions">
                   ${provider.pdf_url ? `<button class="pdf-btn" data-url="${this._escapeAttr(provider.pdf_url)}">Deschide PDF</button>` : ""}
                   ${this._buildProviderOpenAppButton(provider)}
@@ -843,6 +1040,7 @@ _buildProviderRefreshButton(provider) {
       eon: "App. E.ON",
       hidroelectrica: "App. Hidroelectrica",
       nova: "App. Nova",
+      ebloc: "App. e-bloc",
     };
     return labels[key] || "";
   }
@@ -1260,6 +1458,7 @@ _buildProviderRefreshButton(provider) {
         const wrapper = event.target.closest(".reading-control");
         const numberEntityId = wrapper?.getAttribute("data-number-entity");
         const buttonEntityId = wrapper?.getAttribute("data-button-entity");
+        const currentEntityId = wrapper?.getAttribute("data-current-entity");
         const input = wrapper?.querySelector(".reading-input");
         const value = String(input?.value ?? "").trim();
 
@@ -1334,6 +1533,7 @@ _buildProviderRefreshButton(provider) {
             numberEntityId,
             buttonEntityId,
             this._findEntityId(),
+            currentEntityId,
           ]);
 
           this._readingCache.clear();

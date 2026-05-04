@@ -52,6 +52,7 @@ FURNIZOR_APA_CANAL = "apa_canal"
 FURNIZOR_HIDROELECTRICA = "hidroelectrica"
 FURNIZOR_MYELECTRICA = "myelectrica"
 FURNIZOR_DEER = "deer"
+FURNIZOR_EBLOC = "ebloc"
 
 CONF_DATE_TOKEN_EON = "date_token_eon"
 

@@ -29,6 +29,7 @@ from .licentiere import (
 )
 from .modele import InstantaneuFurnizor
 from .notificari import ManagerNotificari
+from .storage_citiri import async_salveaza_citire, obtine_citire_cache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -174,6 +175,8 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
                     err,
                 )
 
+            await self._sincronizeaza_citiri_din_portal(instantaneu)
+
             return instantaneu
 
         except EroareAutentificare as err:
@@ -182,6 +185,51 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
             raise UpdateFailed(str(err)) from err
         except Exception as err:
             raise UpdateFailed(f"Eroare neașteptată la {self.cheie_furnizor}: {err}") from err
+
+
+    async def _sincronizeaza_citiri_din_portal(self, instantaneu: InstantaneuFurnizor) -> None:
+        if getattr(instantaneu, "furnizor", self.cheie_furnizor) != "apa_canal":
+            return
+
+        for cont in getattr(instantaneu, "conturi", None) or []:
+            id_cont = str(getattr(cont, "id_cont", "") or "").strip()
+            raw = getattr(cont, "date_brute", None) or {}
+            if not id_cont or not isinstance(raw, dict):
+                continue
+
+            ultima = raw.get("last_meter_reading") or {}
+            if not isinstance(ultima, dict):
+                continue
+
+            valoare = self._float_or_none(ultima.get("value"))
+            data_citire = self._normalize_date_like(ultima.get("date")) or ultima.get("date")
+            motiv = str(ultima.get("reason") or ultima.get("category") or "").strip().lower()
+
+            if valoare is None or not data_citire:
+                continue
+            if motiv and not any(token in motiv for token in ("client", "citire client", "customer")):
+                continue
+
+            existent = obtine_citire_cache(self.hass, "apa_canal", id_cont) or {}
+            existent_valoare = self._float_or_none(existent.get("valoare"))
+            existent_timestamp = str(existent.get("timestamp") or "")[:10]
+            if existent_valoare == valoare and existent_timestamp == str(data_citire)[:10]:
+                continue
+
+            await async_salveaza_citire(
+                self.hass,
+                "apa_canal",
+                id_cont,
+                valoare,
+                timestamp=str(data_citire),
+                sursa="portal",
+                extra={
+                    "motiv": ultima.get("reason"),
+                    "categorie": ultima.get("category"),
+                    "serie_contor": ultima.get("serial_number"),
+                    "unitate": ultima.get("unit"),
+                },
+            )
 
     def _construieste_snapshot_notificari(
         self, instantaneu: InstantaneuFurnizor
@@ -299,7 +347,7 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
         if start and end:
             return start, end
 
-        window_data = raw.get("window_data") or {}
+        window_data = raw.get("window_data") or raw.get("meter_reading_window") or {}
         if isinstance(window_data, dict):
             start = self._normalize_date_like(
                 window_data.get("StartDate")

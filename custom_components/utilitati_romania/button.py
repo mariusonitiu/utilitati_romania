@@ -21,6 +21,7 @@ from .hidro_device import alias_loc_consum, info_device_hidro, slug_loc_consum
 from .eon_device import alias_loc_eon, info_device_eon, slug_loc_eon
 from .furnizori.hidroelectrica_helper import build_usage_entity, safe_get
 from .myelectrica_device import alias_loc_myelectrica, info_device_myelectrica, slug_loc_myelectrica
+from .ebloc_device import alias_loc_ebloc, info_device_ebloc, slug_loc_ebloc
 
 from .storage_citiri import async_salveaza_citire
 
@@ -34,6 +35,21 @@ def _cont_curent_dupa_id(coordonator: CoordonatorUtilitatiRomania, id_cont: str 
         if getattr(cont, "id_cont", None) == id_cont:
             return cont
     return None
+
+
+def _citire_permisa_curenta(coordonator: CoordonatorUtilitatiRomania, id_cont: str) -> bool:
+    data = getattr(coordonator, "data", None)
+    consumuri = getattr(data, "consumuri", None) or []
+    for consum in consumuri:
+        if getattr(consum, "id_cont", None) != id_cont:
+            continue
+        if getattr(consum, "cheie", None) != "citire_permisa":
+            continue
+        valoare = getattr(consum, "valoare", None)
+        if isinstance(valoare, str):
+            return valoare.strip().lower() in {"da", "true", "1", "yes", "on"}
+        return bool(valoare)
+    return False
 
 
 def _admin_license_text_entity_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
@@ -77,6 +93,9 @@ async def async_setup_entry(
             are_contor = bool(contoare and (contoare[0].get("SerieContor") or ((contoare[0].get("to_Cadran") or [{}])[0].get("RegisterCode"))))
             if are_contor:
                 entitati.append(ButonTrimiteIndexMyElectrica(coordonator, cont))
+    elif coordonator.data and coordonator.data.furnizor == "ebloc":
+        for cont in coordonator.data.conturi:
+            entitati.append(ButonTrimiteNumarPersoaneEbloc(coordonator, cont))
     async_add_entities(entitati)
 
 
@@ -208,9 +227,13 @@ class ButonTrimiteIndexHidro(EntitateUtilitatiRomania, ButtonEntity):
 
     @property
     def available(self) -> bool:
-        return _cont_curent_dupa_id(self.coordinator, getattr(self.cont, "id_cont", None)) is not None
+        cont_existent = _cont_curent_dupa_id(self.coordinator, getattr(self.cont, "id_cont", None)) is not None
+        return cont_existent and _citire_permisa_curenta(self.coordinator, self.cont.id_cont)
 
     async def async_press(self) -> None:
+        if not _citire_permisa_curenta(self.coordinator, self.cont.id_cont):
+            raise HomeAssistantError("Perioada de transmitere a indexului nu este activă pentru acest loc de consum.")
+
         numar = self.hass.states.get(self._entity_numar)
         if not numar:
             raise ValueError(f"Nu există entitatea {self._entity_numar}")
@@ -245,13 +268,6 @@ class ButonTrimiteIndexHidro(EntitateUtilitatiRomania, ButtonEntity):
             installation_number=instalare,
             account_number=account_number,
             usage_entity=usage_entities,
-        )
-
-        await async_salveaza_citire(
-            self.hass,
-            "hidroelectrica",
-            self.cont.id_cont,
-            float(index_value),
         )
 
         await async_salveaza_citire(
@@ -412,4 +428,53 @@ class ButonTrimiteIndexMyElectrica(EntitateUtilitatiRomania, ButtonEntity):
             f"Indexul a fost transmis cu succes pentru {alias_loc_myelectrica(self.cont.nume, self.cont.adresa, self.cont.id_cont)}.",
             title="myElectrica",
         )
+        await self.coordinator.async_request_refresh()
+
+
+class ButonTrimiteNumarPersoaneEbloc(EntitateUtilitatiRomania, ButtonEntity):
+    def __init__(self, coordonator: CoordonatorUtilitatiRomania, cont) -> None:
+        super().__init__(coordonator)
+        self.cont = cont
+        alias = alias_loc_ebloc(cont.nume, cont.adresa, cont.id_cont, cont=cont)
+        slug = slug_loc_ebloc(cont.id_cont, alias, cont.adresa, cont=cont)
+        self._attr_unique_id = f"{coordonator.intrare.entry_id}_ebloc_{cont.id_cont}_trimite_numar_persoane"
+        self._attr_name = f"Trimite număr persoane - {alias}"
+        self._attr_icon = "mdi:account-arrow-up"
+        self._attr_device_info = info_device_ebloc(coordonator.intrare.entry_id, cont)
+        self._attr_suggested_object_id = f"{slug}_trimite_numar_persoane"
+        self.entity_id = f"button.{slug}_trimite_numar_persoane"
+        self._entity_numar = f"number.{slug}_numar_persoane_setare"
+
+    @property
+    def available(self) -> bool:
+        data = getattr(self.coordinator, "data", None)
+        if data is None:
+            return False
+        for consum in data.consumuri:
+            if getattr(consum, "id_cont", None) == self.cont.id_cont and getattr(consum, "cheie", None) == "editare_persoane_permisa":
+                return str(getattr(consum, "valoare", "")).lower() == "da"
+        return False
+
+    async def async_press(self) -> None:
+        stare = self.hass.states.get(self._entity_numar)
+        if not stare:
+            raise HomeAssistantError(f"Nu există entitatea {self._entity_numar}")
+        try:
+            numar_persoane = int(float(stare.state))
+        except (TypeError, ValueError) as err:
+            raise HomeAssistantError("Valoarea pentru numărul de persoane nu este validă.") from err
+
+        luna = None
+        for consum in (getattr(self.coordinator.data, "consumuri", None) or []):
+            if getattr(consum, "id_cont", None) == self.cont.id_cont and getattr(consum, "cheie", None) == "luna_setare_persoane":
+                luna = getattr(consum, "valoare", None)
+                break
+        if not luna:
+            raise HomeAssistantError("Nu am găsit luna pentru setarea numărului de persoane.")
+
+        rezultat = await self.coordinator.client.async_seteaza_numar_persoane(self.cont.id_cont, str(luna), numar_persoane)
+        text = str(rezultat).lower()
+        if "error" in text or "eroare" in text:
+            raise HomeAssistantError(f"e-bloc.ro a refuzat actualizarea numărului de persoane: {rezultat}")
+
         await self.coordinator.async_request_refresh()

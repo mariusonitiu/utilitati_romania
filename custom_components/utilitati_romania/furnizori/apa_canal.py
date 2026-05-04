@@ -7,7 +7,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, quote_plus
 
@@ -341,6 +341,108 @@ class ApiApaCanal:
         except json.JSONDecodeError as err:
             raise EroareApiApaCanal(f"Nu am putut parsa răspunsul JSON din batch: {err}") from err
 
+    def _batch_post(self, cale_relativa: str, payload: dict[str, Any], *, allow_reauth: bool = True) -> dict[str, Any]:
+        if not self._csrf_token:
+            self._fetch_csrf_token()
+
+        batch_boundary = f"batch_{uuid.uuid4().hex[:4]}-{uuid.uuid4().hex[:4]}-{uuid.uuid4().hex[:4]}"
+        changeset_boundary = f"changeset_{uuid.uuid4().hex[:4]}-{uuid.uuid4().hex[:4]}-{uuid.uuid4().hex[:4]}"
+        json_payload = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).replace("/", r"\/")
+        body = (
+            f"--{batch_boundary}\r\n"
+            f"Content-Type: multipart/mixed; boundary={changeset_boundary}\r\n"
+            "\r\n"
+            f"--{changeset_boundary}\r\n"
+            "Content-Type: application/http\r\n"
+            "Content-Transfer-Encoding: binary\r\n"
+            "\r\n"
+            f"POST {cale_relativa} HTTP/1.1\r\n"
+            f"User-Agent: {ANTETE_IMPLICITE['User-Agent']}\r\n"
+            "X-REQUESTED-WITH: XMLHttpRequest\r\n"
+            "Accept-Language: en\r\n"
+            "Accept: application/json\r\n"
+            "MaxDataServiceVersion: 2.0\r\n"
+            "DataServiceVersion: 2.0\r\n"
+            f"x-csrf-token: {self._csrf_token or ''}\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(json_payload.encode('utf-8'))}\r\n"
+            "\r\n"
+            f"{json_payload}\r\n"
+            f"--{changeset_boundary}--\r\n"
+            "\r\n"
+            f"--{batch_boundary}--\r\n"
+        )
+        headers = {
+            **ANTETE_IMPLICITE,
+            "Accept": "application/json",
+            "Content-Type": f"multipart/mixed;boundary={batch_boundary}",
+            "DataServiceVersion": "2.0",
+            "MaxDataServiceVersion": "2.0",
+            "Origin": URL_BAZA,
+            "Referer": (
+                "https://portal.apacansb.ro/sap/bc/ui5_ui5/sap/UMCUI5_MOBILE/"
+                "index.html?sap-client=001&sap-language=EN"
+            ),
+            "X-CSRF-Token": self._csrf_token or "",
+            "X-Requested-With": "XMLHttpRequest",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "Priority": "u=0, i",
+        }
+        raspuns = self._request("POST", URL_BATCH, data=body.encode("utf-8"), headers=headers)
+        text = raspuns.text
+        pagina_login = (
+            'name="sap-password"' in text
+            or 'name="sap-alias"' in text
+            or ("<!DOCTYPE HTML>" in text and '{"d":' not in text)
+        )
+        if raspuns.status_code in (401, 403) or pagina_login:
+            if allow_reauth and self._username and self._password:
+                self.login(self._username, self._password)
+                return self._batch_post(cale_relativa, payload, allow_reauth=False)
+            raise EroareAutentificareApaCanal("Sesiunea portalului a expirat.")
+        if raspuns.status_code >= 400:
+            raise EroareApiApaCanal(f"Eroare HTTP la transmiterea indexului Apă Canal: {raspuns.status_code}")
+
+        match = re.search(r'(\{"d":.*?\})(?:\r?\n--|$)', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError as err:
+                raise EroareApiApaCanal(
+                    f"Nu am putut parsa răspunsul JSON după transmiterea indexului: {err}"
+                ) from err
+
+        statusuri_interne = re.findall(r"HTTP/1\.1\s+(\d{3})\s*([^\r\n]*)", text)
+        if statusuri_interne:
+            status, descriere = statusuri_interne[-1]
+            if status.startswith("2"):
+                return {"d": {"success": True, "status": status, "description": descriere.strip()}}
+
+            mesaj_sap = ""
+            mesaj_match = re.search(r'"message"\s*:\s*\{[^}]*"value"\s*:\s*"([^"]+)"', text, re.DOTALL)
+            if mesaj_match:
+                mesaj_sap = mesaj_match.group(1)
+            else:
+                text_curat = re.sub(r"\s+", " ", text).strip()
+                mesaj_sap = text_curat[:500]
+            if "does not have status mr order created" in mesaj_sap.lower():
+                raise EroareApiApaCanal(
+                    "Index deja transmis pentru perioada curentă. Portalul Apă Canal Sibiu nu mai permite o nouă transmitere pe același ordin de citire."
+                )
+
+            raise EroareApiApaCanal(
+                f"Transmiterea indexului Apă Canal a fost respinsă de SAP: HTTP {status} {descriere.strip()}. {mesaj_sap}".strip()
+            )
+
+        fragment = re.sub(r"\s+", " ", text).strip()[:500]
+        raise EroareApiApaCanal(
+            f"Răspuns batch invalid după transmiterea indexului. Fragment răspuns: {fragment}"
+        )
+
     def login_and_get_contract_choices(self, utilizator: str, parola: str) -> list[OptiuneContractApaCanal]:
         self.login(utilizator, parola)
         return self.get_contract_choices()
@@ -355,6 +457,18 @@ class ApiApaCanal:
     ) -> dict[str, Any]:
         self._ensure_login(utilizator, parola)
         return self.get_dashboard_data(account_id, contract_id, contract_account_id)
+
+    def login_and_submit_meter_reading(
+        self,
+        utilizator: str,
+        parola: str,
+        contract_id: str,
+        device_id: str,
+        register_id: str,
+        reading_result: int | float | str,
+    ) -> dict[str, Any]:
+        self._ensure_login(utilizator, parola)
+        return self.submit_meter_reading(contract_id, device_id, register_id, reading_result)
 
     def get_contract_choices(self) -> list[OptiuneContractApaCanal]:
         data = self._batch_get(
@@ -411,12 +525,17 @@ class ApiApaCanal:
         meter_data = self._batch_get(
             f"Contracts('{quote(contract_id, safe='')}')/MeterReadingResults?$format=json&$expand=MeterReadingStatus,MeterReadingCategory,MeterReadingReason"
         )
+        devices_data = self._batch_get(
+            f"Contracts('{quote(contract_id, safe='')}')/ContractAllDevices?$format=json"
+        )
 
         balance_results = balance_data.get("d", {}).get("results", [])
         invoices = invoices_data.get("d", {}).get("results", [])
         payments = payments_data.get("d", {}).get("results", [])
         consumptions = consumption_data.get("d", {}).get("results", [])
         meter_results = meter_data.get("d", {}).get("results", [])
+        devices = devices_data.get("d", {}).get("results", [])
+        reading_window = self._build_meter_reading_window(contract_id, devices)
 
         sold_curent = None
         for item in balance_results:
@@ -443,7 +562,99 @@ class ApiApaCanal:
             "last_payment": self._normalize_payment(ultima_plata),
             "last_consumption": self._normalize_consumption(ultimul_consum),
             "last_meter_reading": self._normalize_meter_reading(ultimul_index),
+            "meter_reading_window": reading_window,
         }
+
+    def _build_meter_reading_window(self, contract_id: str, devices: list[dict[str, Any]]) -> dict[str, Any]:
+        registers: list[dict[str, Any]] = []
+        for device in devices:
+            device_id = str(device.get("DeviceID") or "").strip()
+            if not device_id:
+                continue
+            try:
+                data = self._batch_get(
+                    f"Devices('{quote(device_id, safe='')}')/RegistersToRead?$format=json&$expand=RegisterType,MeterReadingReason,MeterReadingCategory"
+                )
+            except EroareApiApaCanal as err:
+                _LOGGER.debug(
+                    "Nu am putut citi registrele de transmis pentru Apă Canal Sibiu, contract=%s, device=%s: %s",
+                    contract_id,
+                    device_id,
+                    err,
+                )
+                continue
+            for item in data.get("d", {}).get("results", []) or []:
+                register_id = str(item.get("RegisterID") or "").strip()
+                if register_id:
+                    registers.append(self._normalize_register_to_read(item, device))
+
+        is_open = bool(registers)
+        today = datetime.now(timezone.utc).date()
+        return {
+            "available": is_open,
+            "is_open": is_open,
+            "start_date": today.isoformat() if is_open else None,
+            "end_date": (today + timedelta(days=5)).isoformat() if is_open else None,
+            "period": f"{today.isoformat()} - {(today + timedelta(days=5)).isoformat()}" if is_open else None,
+            "contract_id": contract_id,
+            "registers": registers,
+        }
+
+    def _normalize_register_to_read(self, item: dict[str, Any], device: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "device_id": item.get("DeviceID") or (device or {}).get("DeviceID"),
+            "register_id": item.get("RegisterID"),
+            "unit": item.get("ReadingUnit") or "M3",
+            "integer_places": item.get("IntegerPlaces"),
+            "decimal_places": item.get("DecimalPlaces"),
+            "previous_reading": _float_or_none(item.get("PreviousMeterReadingResult")),
+            "previous_reading_date": _sap_date_to_iso(item.get("PreviousMeterReadingDate")),
+            "previous_reason_id": item.get("PreviousMeterReadingReasonID"),
+            "previous_category_id": item.get("PreviousMeterReadingCategoryID"),
+            "serial_number": item.get("SerialNumber") or (device or {}).get("SerialNumber"),
+            "reason": (item.get("MeterReadingReason") or {}).get("Description"),
+            "reason_id": item.get("PreviousMeterReadingReasonID") or (item.get("MeterReadingReason") or {}).get("MeterReadingReasonID"),
+            "category": (item.get("MeterReadingCategory") or {}).get("Description"),
+            "category_id": item.get("PreviousMeterReadingCategoryID") or (item.get("MeterReadingCategory") or {}).get("MeterReadingCategoryID"),
+            "register_type": (item.get("RegisterType") or {}).get("Description"),
+        }
+
+    def submit_meter_reading(
+        self,
+        contract_id: str,
+        device_id: str,
+        register_id: str,
+        reading_result: int | float | str,
+    ) -> dict[str, Any]:
+        if not device_id or not register_id:
+            devices_data = self._batch_get(f"Contracts('{quote(contract_id, safe='')}')/ContractAllDevices?$format=json")
+            window = self._build_meter_reading_window(contract_id, devices_data.get("d", {}).get("results", []) or [])
+            registers = window.get("registers") or []
+            if registers:
+                device_id = device_id or str(registers[0].get("device_id") or "")
+                register_id = register_id or str(registers[0].get("register_id") or "")
+
+        if not device_id or not register_id:
+            raise EroareApiApaCanal("Nu am putut identifica dispozitivul și registrul pentru transmiterea indexului.")
+
+        try:
+            valoare = str(int(float(reading_result)))
+        except (TypeError, ValueError) as err:
+            raise EroareApiApaCanal("Valoarea indexului nu este validă.") from err
+
+        timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        payload = {
+            "DependentMeterReadingResults": [],
+            "DeviceID": str(device_id),
+            "RegisterID": str(register_id),
+            "ReadingResult": valoare,
+            "ReadingDateTime": f"/Date({timestamp_ms})/",
+            "MeterReadingNoteID": "",
+        }
+        return self._batch_post(
+            f"Devices('{quote(str(device_id), safe='')}')/MeterReadingResults",
+            payload,
+        )
 
     def _pick_latest(self, items: list[dict[str, Any]], camp_data: str) -> dict[str, Any] | None:
         if not items:
@@ -541,6 +752,24 @@ class ClientFurnizorApaCanal(ClientFurnizor):
             prima = contracte[0]
             return f"{prima.account_id}_{prima.contract_id}"
         return self.utilizator.lower()
+
+    async def async_transmite_index(self, contract_id: str, device_id: str, register_id: str, index_value: int | float | str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self.api.login_and_submit_meter_reading,
+                self.utilizator,
+                self.parola,
+                contract_id,
+                device_id,
+                register_id,
+                index_value,
+            )
+        except EroareAutentificareApaCanal as err:
+            raise EroareAutentificare(str(err)) from err
+        except EroareApiApaCanal as err:
+            raise EroareConectare(str(err)) from err
+        except Exception as err:
+            raise EroareParsare(f"Eroare neașteptată la transmiterea indexului Apă Canal: {err}") from err
 
     async def async_obtine_instantaneu(self) -> InstantaneuFurnizor:
         account_id = str(self.optiuni.get(CONF_ACCOUNT_ID) or "").strip()
@@ -662,6 +891,59 @@ class ClientFurnizorApaCanal(ClientFurnizor):
             )
         )
 
+        fereastra_index = date_brute.get("meter_reading_window") or {}
+        registre_index = fereastra_index.get("registers") or []
+        primul_registru = registre_index[0] if registre_index else {}
+        citire_permisa = bool(fereastra_index.get("is_open"))
+        consumuri.append(
+            ConsumUtilitate(
+                cheie="citire_index_permisa",
+                valoare="da" if citire_permisa else "nu",
+                unitate=None,
+                perioada=fereastra_index.get("period"),
+                id_cont=account_id,
+                tip_utilitate="apa",
+                tip_serviciu="apa_canal",
+                date_brute=fereastra_index,
+            )
+        )
+        consumuri.append(
+            ConsumUtilitate(
+                cheie="perioada_citire",
+                valoare=fereastra_index.get("period") or "",
+                unitate=None,
+                perioada=fereastra_index.get("period"),
+                id_cont=account_id,
+                tip_utilitate="apa",
+                tip_serviciu="apa_canal",
+                date_brute=fereastra_index,
+            )
+        )
+        consumuri.append(
+            ConsumUtilitate(
+                cheie="zile_pana_citire_index",
+                valoare=0 if citire_permisa else None,
+                unitate="zile",
+                perioada=fereastra_index.get("period"),
+                id_cont=account_id,
+                tip_utilitate="apa",
+                tip_serviciu="apa_canal",
+                date_brute=fereastra_index,
+            )
+        )
+        consumuri.append(
+            ConsumUtilitate(
+                cheie="index_de_transmis",
+                valoare=_float_or_none(primul_registru.get("previous_reading")),
+                unitate=primul_registru.get("unit") or "M3",
+                perioada=primul_registru.get("previous_reading_date"),
+                id_cont=account_id,
+                tip_utilitate="apa",
+                tip_serviciu="apa_canal",
+                date_brute=primul_registru,
+            )
+        )
+
         sold = date_brute.get("current_balance") or {}
         consumuri.append(
             ConsumUtilitate(
@@ -772,6 +1054,7 @@ class ClientFurnizorApaCanal(ClientFurnizor):
             "last_payment": date_brute.get("last_payment"),
             "last_consumption": date_brute.get("last_consumption"),
             "last_meter_reading": date_brute.get("last_meter_reading"),
+            "meter_reading_window": date_brute.get("meter_reading_window"),
         }
 
         return InstantaneuFurnizor(
