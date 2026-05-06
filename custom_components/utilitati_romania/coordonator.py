@@ -298,12 +298,37 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
         self, instantaneu: InstantaneuFurnizor
     ) -> list[dict[str, Any]]:
         ferestre: list[dict[str, Any]] = []
+        furnizor = getattr(instantaneu, "furnizor", self.cheie_furnizor)
+
+        # Notificările pentru transmiterea indexului se generează doar pentru
+        # furnizorii pentru care integrarea are efectiv flux de autocitire.
+        # DEER, de exemplu, expune date tehnice de contor, dar nu oferă în
+        # integrarea noastră un flux real de transmitere index; fără această
+        # filtrare poate apărea o notificare falsă.
+        furnizori_cu_autocitire = {
+            "apa_canal",
+            "ebloc",
+            "eon",
+            "hidroelectrica",
+            "myelectrica",
+        }
+        if furnizor not in furnizori_cu_autocitire:
+            return ferestre
+
         conturi = getattr(instantaneu, "conturi", None) or []
 
         for cont in conturi:
+            if not self._citire_index_permisa_din_instantaneu(instantaneu, cont):
+                continue
+
             fereastra = self._extrage_fereastra_index_din_cont(cont)
             if not fereastra:
-                continue
+                # Dacă furnizorul confirmă explicit că transmiterea este permisă,
+                # dar nu avem o perioadă parsabilă, folosim o fereastră minimă
+                # strict pentru notificare. Nu folosim niciodată citiri anterioare
+                # drept dovadă că perioada este activă.
+                azi = date.today()
+                fereastra = (azi.isoformat(), (azi + timedelta(days=5)).isoformat())
 
             start, end = fereastra
             if not start or not end:
@@ -311,7 +336,7 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
 
             ferestre.append(
                 {
-                    "furnizor": getattr(instantaneu, "furnizor", self.cheie_furnizor),
+                    "furnizor": furnizor,
                     "cont": getattr(cont, "id_cont", None),
                     "nume_cont": getattr(cont, "nume", None),
                     "adresa": getattr(cont, "adresa", None),
@@ -319,11 +344,156 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
                     "tip_serviciu": getattr(cont, "tip_serviciu", None),
                     "start": start,
                     "end": end,
+                    "citire_permisa": True,
                     "date_brute": getattr(cont, "date_brute", None),
                 }
             )
 
         return ferestre
+
+    def _citire_index_permisa_din_instantaneu(
+        self,
+        instantaneu: InstantaneuFurnizor,
+        cont: Any,
+    ) -> bool:
+        id_cont = str(getattr(cont, "id_cont", "") or "").strip()
+        consumuri = getattr(instantaneu, "consumuri", None) or []
+
+        for consum in consumuri:
+            if str(getattr(consum, "id_cont", "") or "").strip() != id_cont:
+                continue
+            if getattr(consum, "cheie", None) not in {"citire_permisa", "citire_index_permisa"}:
+                continue
+
+            permis = self._valoare_booleana_stricta(getattr(consum, "valoare", None))
+            if permis is not None:
+                return permis
+
+        raw = getattr(cont, "date_brute", None) or {}
+        if not isinstance(raw, dict):
+            return False
+
+        permis = self._citire_index_permisa_din_raw(raw)
+        return permis is True
+
+    def _citire_index_permisa_din_raw(self, raw: dict[str, Any]) -> bool | None:
+        chei_directe = (
+            "citire_permisa",
+            "citire_index_permisa",
+            "reading_allowed",
+            "readingAvailable",
+            "reading_available",
+            "self_reading_allowed",
+            "can_submit_index",
+            "canSubmitIndex",
+            "index_submission_allowed",
+            "autocitire_permisa",
+            "PACIndicator",
+        )
+
+        for cheie in chei_directe:
+            if cheie not in raw:
+                continue
+            permis = self._valoare_booleana_stricta(raw.get(cheie))
+            if permis is not None:
+                return permis
+
+        window_data = raw.get("window_data") or raw.get("meter_reading_window") or {}
+        if isinstance(window_data, dict):
+            for cheie in (
+                "Is_Window_Open",
+                "is_window_open",
+                "IsWindowOpen",
+                "window_open",
+                "open",
+                "active",
+                "citire_permisa",
+                "reading_allowed",
+            ):
+                if cheie not in window_data:
+                    continue
+                permis = self._valoare_booleana_stricta(window_data.get(cheie))
+                if permis is not None:
+                    return permis
+
+        meter_list = raw.get("meter_list") or {}
+        if isinstance(meter_list, dict):
+            for cheie in ("PACIndicator", "citire_permisa", "reading_allowed"):
+                if cheie not in meter_list:
+                    continue
+                permis = self._valoare_booleana_stricta(meter_list.get(cheie))
+                if permis is not None:
+                    return permis
+
+        return None
+
+    @staticmethod
+    def _valoare_booleana_stricta(valoare: Any) -> bool | None:
+        if valoare is None:
+            return None
+
+        if isinstance(valoare, bool):
+            return valoare
+
+        if isinstance(valoare, (int, float)):
+            if int(valoare) == 1:
+                return True
+            if int(valoare) == 0:
+                return False
+            return None
+
+        text = str(valoare).strip().lower()
+        if not text:
+            return None
+
+        valori_true = {
+            "da",
+            "true",
+            "1",
+            "yes",
+            "on",
+            "open",
+            "opened",
+            "deschis",
+            "activ",
+            "activa",
+            "activă",
+            "permisa",
+            "permisă",
+            "permis",
+            "allowed",
+            "available",
+            "x",
+            "y",
+        }
+        valori_false = {
+            "nu",
+            "false",
+            "0",
+            "no",
+            "off",
+            "closed",
+            "inchis",
+            "închis",
+            "inactiv",
+            "inactiva",
+            "inactivă",
+            "nepermis",
+            "nepermisa",
+            "nepermisă",
+            "not_allowed",
+            "unavailable",
+            "indisponibil",
+            "unknown",
+            "necunoscut",
+        }
+
+        if text in valori_true:
+            return True
+        if text in valori_false:
+            return False
+
+        return None
 
     def _extrage_fereastra_index_din_cont(
         self, cont: Any
@@ -395,18 +565,6 @@ class CoordonatorUtilitatiRomania(DataUpdateCoordinator[InstantaneuFurnizor]):
                 )
                 if start and end:
                     return start, end
-
-        # Fallback util mai ales pentru Hidroelectrica:
-        # dacă integrarea știe deja că citirea este permisă, dar API-ul nu oferă
-        # date de început/sfârșit într-un format parsabil, construim o fereastră
-        # minimă artificială pentru a permite logica de notificare.
-        previous_read = raw.get("previous_meter_read") or {}
-        previous_data = previous_read.get("result", {}).get("Data", []) if isinstance(previous_read, dict) else []
-        citire_permisa = bool(previous_data)
-
-        if citire_permisa:
-            azi = date.today()
-            return azi.isoformat(), (azi + timedelta(days=5)).isoformat()
 
         return None
 
