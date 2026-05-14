@@ -1,42 +1,35 @@
-# Utilități România – Home Assistant Integration
+# Utilități România
 
-Integrare unificată pentru gestionarea utilităților din România direct în Home Assistant.
+Integrare unificată pentru Home Assistant care centralizează utilitățile din România într-o singură experiență coerentă.
 
-Centralizează facturi, notificări și transmiterea indexului într-un singur loc, indiferent de furnizor.
+Permite gestionarea facturilor, notificărilor și transmiterii indexului direct din Home Assistant, indiferent de furnizor.
+
+---
+
+## Funcționalități
+
+- Facturi centralizate pentru mai mulți furnizori
+- Suport multi-locație și multi-contract
+- Card Lovelace dedicat
+- Notificări automate pentru:
+  - facturi noi
+  - deschiderea perioadei de transmitere index
+- Transmitere index direct din dashboard
+- Detectare automată a perioadelor de citire
+- Deschidere rapidă a aplicațiilor furnizorilor
+- Grupare facturi pe locații
+- Actualizare manuală a datelor
+- Marcare manuală a facturilor ca plătite
+- Sistem integrat de licențiere
+- Integrare nativă Home Assistant
 
 ---
 
-## ✨ Funcționalități principale
-
-- 📄 Facturi centralizate pentru mai mulți furnizori
-- 🏠 Suport multi-locație (mai multe adrese / POD-uri / contracte)
-- 🔔 Notificări automate:
-  - facturi noi emise
-  - deschiderea perioadei de citire a indexului
-- ✍️ Transmitere index direct din dashboard
-- 🧠 Detectare automată perioadă de citire
-- 🔑 Sistem de licențiere integrat (trial 90 zile + lifetime)
-- 🧩 Integrare nativă Home Assistant
-
----
-## ✨ Funcționalități noi (v1.6.0)
-
-- Marcarea manuală a facturilor ca plătite
-- Status persistent (se păstrează după refresh și restart)
-- Posibilitatea de a anula marcarea
-- Interfață adaptivă (butonul dispare pentru facturile deja plătite)
-
-### Marcarea manuală a facturilor
-
-În situațiile în care plata este efectuată în altă aplicație (ex: bancă), iar furnizorul întârzie actualizarea statusului, poți marca manual factura ca plătită direct din cardul integrării.
-
-Statusul este salvat local și se reflectă imediat în interfață.
-
-## 🖼️ Interfață
+## Interfață
 
 ### Card facturi utilități
 
-![Facturi utilități](./docs/card.png)
+![Card facturi](./docs/card.png)
 
 ---
 
@@ -46,13 +39,13 @@ Statusul este salvat local și se reflectă imediat în interfață.
 
 ---
 
-### Device & Control
+### Device & administrare
 
-![Device](./docs/integrare2.png)
+![Administrare](./docs/integrare2.png)
 
 ---
 
-## ⚡ Furnizori suportați (în prezent)
+## Furnizori suportați
 
 - E.ON
 - Hidroelectrica
@@ -60,81 +53,98 @@ Statusul este salvat local și se reflectă imediat în interfață.
 - Digi
 - Nova
 - Apă Canal Sibiu
+- e-bloc.ro
 
-👉 Lista este în continuă extindere. Vor fi adăugați și alți furnizori.
+Lista furnizorilor este în continuă extindere.
 
 ---
 
-## 🚀 Instalare
+## Instalare
 
-### Prin HACS
+### Instalare prin HACS
 
 1. Deschide HACS
-2. Mergi la Integrations
-3. Adaugă repository custom:
-   https://github.com/mariusonitiu/utilitati_romania
+2. Accesează `Integrations`
+3. Adaugă repository-ul custom:
+
+   `https://github.com/mariusonitiu/utilitati_romania`
+
 4. Instalează integrarea
 5. Restart Home Assistant
 
 ---
 
-## ⚙️ Configurare
+## Configurare
 
-1. Settings → Devices & Services
-2. Add Integration
-3. Caută Utilități România
+1. Accesează `Settings → Devices & Services`
+2. Selectează `Add Integration`
+3. Caută `Utilități România`
 
 ---
 
-## 📊 Card custom
+## Card Lovelace
 
+```yaml
 type: custom:utilitati-romania-facturi-card
-
-🧩 Grupare facturi între furnizori
-
-Integrarea permite acum gruparea manuală a facturilor provenite de la furnizori diferiți, astfel încât mai multe servicii (energie, gaz, internet etc.) aferente aceleiași locații să fie afișate împreună.
-
-Cum funcționează:
-Fiecare adresă / loc de consum poate avea o etichetă de grupare definită manual
-Facturile cu aceeași etichetă sunt afișate împreună în card
-Dacă nu este definită o etichetă, se folosește automat gruparea implicită
-Configurare:
-Accesează device-ul „Grupare facturi”
-Completează câmpurile „Grupare facturi …” pentru fiecare locație
-Folosește aceeași etichetă pentru locațiile care trebuie grupate
+```
 
 ---
 
-## 🔑 Licență
+## Funcții importante
 
-- Trial 90 zile inclus
-- Upgrade la lifetime
+### Transmitere index
 
----
-
-## ☕ Susține proiectul
-
-https://buymeacoffee.com/mariusonitiu
+Integrarea detectează automat perioadele active de transmitere și permite trimiterea indexului direct din card.
 
 ---
 
-## 📌 Roadmap
+### Notificări automate
 
-- noi furnizori
-- îmbunătățiri UI
-- optimizări
+Sunt generate notificări pentru:
+
+- emiterea unor facturi noi
+- deschiderea perioadelor de transmitere index
 
 ---
 
-## ⚠️ Disclaimer
+### Grupare facturi
 
-Integrare neoficială.
+Mai multe contracte sau locații pot fi grupate manual astfel încât facturile aferente aceleiași locații să fie afișate împreună.
+
+Configurarea se face din device-ul `Grupare facturi`.
+
+---
+
+### Deschidere aplicații furnizori
+
+Integrarea poate deschide direct aplicațiile mobile ale furnizorilor compatibili din Home Assistant.
+
+---
+
+## Licențiere
+
+Integrarea include:
+
+- trial gratuit 90 zile
+- licență lifetime
+
+După expirarea perioadei trial, integrarea continuă să funcționeze cu funcționalități limitate până la activarea unei licențe.
+
+---
+
+## Susține proiectul
+
+Dacă integrarea îți este utilă și dorești să susții dezvoltarea și mentenanța proiectului:
+
+`https://buymeacoffee.com/mariusonitiu`
+
+---
 
 ## Atribuire și componente derivate
 
-Această integrare este un proiect unificat și refactorizat pentru Home Assistant, dezvoltat pentru a grupa mai mulți furnizori de utilități din România într-o singură integrare.
+Această integrare reprezintă un proiect unificat și refactorizat pentru Home Assistant, dezvoltat pentru a integra mai mulți furnizori de utilități din România într-o singură integrare coerentă.
 
-Anumite componente, în special logica de comunicare API pentru unii furnizori, sunt derivate sau inspirate din proiecte open-source publicate de cnecrea sub licență MIT:
+Anumite componente, în special logica de comunicare API pentru unii furnizori, sunt derivate sau inspirate din proiecte open-source publicate de Cristian Necrea sub licență MIT:
 
 - https://github.com/cnecrea/eonromania
 - https://github.com/cnecrea/hidroelectrica
@@ -142,4 +152,24 @@ Anumite componente, în special logica de comunicare API pentru unii furnizori, 
 
 Componentele derivate din aceste proiecte sunt utilizate cu respectarea licenței MIT, inclusiv prin păstrarea notificărilor de copyright în fișierele relevante.
 
-Restul integrării, inclusiv structura unificată, agregarea facturilor, interfața de administrare, logica de licențiere, cardul Lovelace și adaptările specifice proiectului Utilități România, reprezintă contribuții proprii ale proiectului.
+Restul integrării, inclusiv:
+
+- arhitectura unificată
+- agregarea furnizorilor
+- cardul Lovelace
+- logica de notificări
+- administrarea integrării
+- gruparea facturilor
+- sistemul de licențiere
+- integrarea e-bloc.ro
+- interfața și funcționalitățile specifice proiectului
+
+reprezintă contribuții proprii ale proiectului Utilități România.
+
+---
+
+## Disclaimer
+
+Integrare neoficială pentru Home Assistant.
+
+Nu este afiliată, susținută sau aprobată oficial de furnizorii integrați.
