@@ -1,6 +1,13 @@
 """Constante pentru integrarea Hidroelectrica România."""
 
 
+# Portions of this file are derived from open-source Home Assistant custom
+# integrations originally authored by Cristian Necrea and published under the MIT License.
+#
+# Copyright (c) Cristian Necrea
+# Copyright (c) Marius Onițiu
+#
+# Licensed under the MIT License. See the LICENSE file in this repository.
 
 
 # ──────────────────────────────────────────────
